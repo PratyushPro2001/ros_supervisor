@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -205,3 +206,27 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+=======
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Virtualenv
+venv/
+.venv/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Logs / temp
+*.log
+tmp/
+*.tmp
+>>>>>>> 118111e (Initial commit: ROS Supervisor backend diagnostics)
