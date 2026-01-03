@@ -1,0 +1,143 @@
+from fastapi import APIRouter
+import threading
+
+# Serialize ROS access: rclpy is NOT thread-safe under concurrent requests.
+_API_ROS_LOCK = threading.Lock()
+
+from backend.core.ros_adapter import create_ros_adapter
+from backend.core.graph_model import build_system_snapshot
+from backend.core.node_health import build_node_health
+
+import backend.scripts.tf_report as tf_report_script
+import backend.scripts.tf_validate as tf_validate_script
+
+router = APIRouter()
+
+
+def _qos_profile_to_dict(q) -> dict:
+    return {
+        "history": getattr(q.history, "name", str(q.history)),
+        "depth": q.depth,
+        "reliability": getattr(q.reliability, "name", str(q.reliability)),
+        "durability": getattr(q.durability, "name", str(q.durability)),
+        "deadline_ns": int(q.deadline.nanoseconds),
+        "lifespan_ns": int(q.lifespan.nanoseconds),
+        "liveliness": getattr(q.liveliness, "name", str(q.liveliness)),
+        "liveliness_lease_duration_ns": int(q.liveliness_lease_duration.nanoseconds),
+        "avoid_ros_namespace_conventions": bool(q.avoid_ros_namespace_conventions),
+    }
+
+
+def _collect_qos_for_topic(node, topic_name: str):
+    pubs = node.get_publishers_info_by_topic(topic_name)
+    subs = node.get_subscriptions_info_by_topic(topic_name)
+
+    pub_list = []
+    for p in pubs:
+        pub_list.append(
+            {
+                "endpoint_type": "PUBLISHER",
+                "node": p.node_name,
+                "topic_type": p.topic_type,
+                "qos": _qos_profile_to_dict(p.qos_profile),
+            }
+        )
+
+    sub_list = []
+    for s in subs:
+        sub_list.append(
+            {
+                "endpoint_type": "SUBSCRIPTION",
+                "node": s.node_name,
+                "topic_type": s.topic_type,
+                "qos": _qos_profile_to_dict(s.qos_profile),
+            }
+        )
+
+    return pub_list, sub_list
+
+
+def _qos_mismatch(pub_qos: dict, sub_qos: dict):
+    issues = []
+    if pub_qos.get("reliability") != sub_qos.get("reliability"):
+        issues.append(f"reliability mismatch: pub={pub_qos.get('reliability')} sub={sub_qos.get('reliability')}")
+    if pub_qos.get("durability") != sub_qos.get("durability"):
+        issues.append(f"durability mismatch: pub={pub_qos.get('durability')} sub={sub_qos.get('durability')}")
+    return issues
+
+
+@router.get("/graph")
+def api_graph():
+    with _API_ROS_LOCK:
+        adapter = create_ros_adapter()
+        return build_system_snapshot(adapter)
+
+
+@router.get("/health")
+def api_health(window_sec: float = 3.0):
+    with _API_ROS_LOCK:
+        adapter = create_ros_adapter()
+        snapshot = build_system_snapshot(adapter)
+        return build_node_health(snapshot, adapter, float(window_sec))
+
+
+@router.get("/qos/report")
+def api_qos_report():
+    with _API_ROS_LOCK:
+        adapter = create_ros_adapter()
+        node = adapter._node  # rclpy.node.Node
+
+        topics = adapter.get_topic_names_and_types()
+        out = {"topics": []}
+
+        for name, types in topics:
+            pubs, subs = _collect_qos_for_topic(node, name)
+            if not pubs and not subs:
+                continue
+            out["topics"].append(
+                {
+                    "name": name,
+                    "publishers": pubs,
+                    "subscribers": subs,
+                    "types": list(types),
+                }
+            )
+        return out
+
+
+@router.get("/qos/validate")
+def api_qos_validate():
+    report = api_qos_report()
+    mismatches = []
+
+    for t in report.get("topics", []):
+        topic = t["name"]
+        pubs = t.get("publishers", [])
+        subs = t.get("subscribers", [])
+        for pub in pubs:
+            for sub in subs:
+                issues = _qos_mismatch(pub["qos"], sub["qos"])
+                if issues:
+                    mismatches.append(
+                        {
+                            "topic": topic,
+                            "publisher": pub["node"],
+                            "subscriber": sub["node"],
+                            "issues": issues,
+                        }
+                    )
+
+    return {"mismatches": mismatches}
+
+
+@router.get("/tf/report")
+def api_tf_report(duration_sec: float = 2.0):
+    with _API_ROS_LOCK:
+        return tf_report_script.inspect_tf(duration_sec=float(duration_sec))
+
+
+@router.get("/tf/validate")
+def api_tf_validate(duration_sec: float = 2.0):
+    with _API_ROS_LOCK:
+        report = tf_report_script.inspect_tf(duration_sec=float(duration_sec))
+        return tf_validate_script.validate_tf(report)

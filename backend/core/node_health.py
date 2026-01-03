@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from backend.core.topic_activity import measure_topic_rate, is_rate_healthy
 
 IGNORE_TOPICS = {"/rosout", "/parameter_events"}
+OBSERVER_NODES = {"ros_supervisor_adapter"}
 
 
 def build_node_health(snapshot: Dict[str, Any], adapter, rate_window_sec: float) -> Dict[str, Any]:
@@ -30,8 +31,8 @@ def build_node_health(snapshot: Dict[str, Any], adapter, rate_window_sec: float)
     rate_map = {tr["topic"]: tr for tr in topic_rates}
 
     for n in sorted(nodes):
-        pubs = []
-        subs = []
+        pubs: List[str] = []
+        subs: List[str] = []
 
         for t in topics:
             tname = t.get("name")
@@ -47,8 +48,12 @@ def build_node_health(snapshot: Dict[str, Any], adapter, rate_window_sec: float)
         meaningful_pubs = [x for x in pubs if x not in IGNORE_TOPICS]
         meaningful_subs = [x for x in subs if x not in IGNORE_TOPICS]
 
+        # Only warn if there is truly no meaningful pub/sub activity
         if not meaningful_pubs and not meaningful_subs:
-            warnings.append("Node has no meaningful pub/sub activity (only rosout/parameter_events or nothing).")
+            if n in OBSERVER_NODES:
+                warnings.append("INFO: observer node (no meaningful pub/sub expected).")
+            else:
+                warnings.append("Node has no meaningful pub/sub activity (only rosout/parameter_events or nothing).")
 
         # If node publishes a meaningful topic, ensure the topic is actually active
         for tname in meaningful_pubs:

@@ -4,7 +4,12 @@ import time
 from typing import Any, Dict, List, Set, Tuple
 
 import rclpy
+import threading
 from rclpy.node import Node
+
+# FastAPI may serve multiple requests concurrently; rclpy spin_once is not re-entrant.
+_SPIN_LOCK = threading.Lock()
+
 from rclpy.qos import QoSProfile, DurabilityPolicy
 
 from tf2_msgs.msg import TFMessage
@@ -51,8 +56,8 @@ class _TFInspectorNode(Node):
     def collect(self) -> Dict[str, Any]:
         end = time.time() + self.duration_sec
         while rclpy.ok() and time.time() < end:
-            rclpy.spin_once(self, timeout_sec=0.1)
-
+            with _SPIN_LOCK:
+                rclpy.spin_once(self, timeout_sec=0.1)
         children_map: Dict[str, List[str]] = {}
         parents_map: Dict[str, List[str]] = {}
         for p, c in sorted(self.edges):

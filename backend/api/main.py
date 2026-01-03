@@ -1,38 +1,26 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.core.ros_adapter import create_ros_adapter, ROSAdapter
-from backend.core.graph_model import build_system_snapshot
+from backend.api.routes import router
+from backend.api.snapshot_daemon import daemon
 
+app = FastAPI(title="ROS Supervisor API")
 
-app = FastAPI(
-    title="ROS Supervisor Backend",
-    description="MVP backend for ROS Supervisor Runtime",
-    version="0.1.0",
-)
-
-# Allow local frontend dev later
+# Dev CORS (Vite @ 5173)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: tighten in production
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Single shared adapter instance for this process
-adapter: ROSAdapter = create_ros_adapter()
+app.include_router(router)
 
+@app.on_event("startup")
+def _startup():
+    daemon.start()
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
-
-
-@app.get("/graph")
-def get_graph():
-    """
-    Return the current ROS system snapshot as JSON.
-    """
-    snapshot = build_system_snapshot(adapter)
-    return snapshot
+@app.on_event("shutdown")
+def _shutdown():
+    daemon.stop()

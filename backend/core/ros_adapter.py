@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import time
+import threading
+from functools import lru_cache
 from typing import Any, Dict, List
 
 import rclpy
 from rclpy.node import Node
+
+# rclpy spin_once is not re-entrant; protect it across the process.
+_SPIN_LOCK = threading.Lock()
 
 
 def _graph_warmup(node: Node, seconds: float = 0.8):
     """Spin briefly so ROS graph discovery settles."""
     end = time.time() + seconds
     while rclpy.ok() and time.time() < end:
-        rclpy.spin_once(node, timeout_sec=0.1)
+        with _SPIN_LOCK:
+            rclpy.spin_once(node, timeout_sec=0.1)
 
 
 class ROSAdapter:
@@ -26,13 +32,13 @@ class ROSAdapter:
             rclpy.init(args=None)
         except Exception:
             pass
+
+        # Single node instance for the whole API process (handled by create_ros_adapter cache).
         self._node = Node("ros_supervisor_adapter")
 
     # ---- Graph basics ----
     def get_nodes(self) -> List[str]:
         _graph_warmup(self._node)
-        # rclpy returns list[str] of node names (without namespaces sometimes depending on API),
-        # we keep it as-is and let callers normalize if needed.
         return list(self._node.get_node_names())
 
     def get_topic_names_and_types(self) -> List[Dict[str, Any]]:
@@ -53,9 +59,6 @@ class ROSAdapter:
         return [i.node_name for i in infos]
 
     def get_topics(self) -> List[Dict[str, Any]]:
-        """
-        Convenience method used by some scripts: returns topics with types + pub/sub lists.
-        """
         _graph_warmup(self._node)
         topics: List[Dict[str, Any]] = []
         for name, types in self._node.get_topic_names_and_types():
@@ -73,13 +76,11 @@ class ROSAdapter:
 
     # ---- TF ----
     def get_tf_tree(self) -> Dict[str, Any]:
-        """Return a TF validation snapshot using the TF inspector/validator."""
         from backend.core.tf_inspector import inspect_tf
         from backend.core.tf_validator import validate_tf
 
         report = inspect_tf(duration_sec=1.0)
         result = validate_tf(report)
-        # graph_model expects {"frames": ..., "errors": ...}
         return {
             "frames": report.get("frames", []),
             "edges": report.get("edges", []),
@@ -94,5 +95,7 @@ class ROSAdapter:
         return read_all_parameters(node_name)
 
 
+@lru_cache(maxsize=1)
 def create_ros_adapter() -> ROSAdapter:
+    # Cached singleton: prevents duplicate Node() creation + rosout publisher warnings.
     return ROSAdapter()
