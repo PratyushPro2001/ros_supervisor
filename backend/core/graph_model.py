@@ -5,53 +5,26 @@ from backend.core.ros_adapter import ROSAdapter
 
 def build_system_snapshot(adapter: ROSAdapter) -> Dict[str, Any]:
     """
-    Build a simple system snapshot for the MVP.
+    MVP graph snapshot used by /graph and the snapshot daemon.
 
-    Shape:
+    Output shape:
     {
-      "nodes": [
-        "/talker",
-        "/listener",
-        ...
-      ],
-      "topics": [
-        {
-          "name": "/chatter",
-          "types": ["std_msgs/msg/String"],
-          "publishers": ["/talker"],
-          "subscribers": ["/listener"]
-        },
-        ...
-      ],
-      "tf_tree": {
-        "frames": [...],
-        "errors": [...]
-      }
+      "nodes": [{"name": "turtlesim"}, ...],
+      "topics": [{"name": "/rosout", "types": ["rcl_interfaces/msg/Log"]}, ...]
     }
+
+    IMPORTANT:
+    - Only sorts by strings (NOT dicts), to avoid TypeError: '<' between dicts.
+    - Keep it lightweight for realtime polling.
     """
-    nodes: List[str] = adapter.get_nodes()
-    raw_topics = adapter.get_topics()
+    # Nodes (name only)
+    nodes_raw = adapter._node.get_node_names_and_namespaces()
+    nodes: List[Dict[str, Any]] = [{"name": n} for (n, _ns) in nodes_raw]
+    nodes.sort(key=lambda x: x["name"])
 
-    topics: List[Dict[str, Any]] = []
-    for t in raw_topics:
-        name = t["name"]
-        types = t["types"]
-        publishers = adapter.get_publishers(name)
-        subscribers = adapter.get_subscribers(name)
-        topics.append(
-            {
-                "name": name,
-                "types": types,
-                "publishers": publishers,
-                "subscribers": subscribers,
-            }
-        )
+    # Topics (name + types)
+    topics_raw = adapter._node.get_topic_names_and_types()
+    topics: List[Dict[str, Any]] = [{"name": name, "types": list(types)} for (name, types) in topics_raw]
+    topics.sort(key=lambda x: x["name"])
 
-    tf_tree = adapter.get_tf_tree()
-
-    snapshot: Dict[str, Any] = {
-        "nodes": nodes,
-        "topics": topics,
-        "tf_tree": tf_tree,
-    }
-    return snapshot
+    return {"nodes": nodes, "topics": topics}

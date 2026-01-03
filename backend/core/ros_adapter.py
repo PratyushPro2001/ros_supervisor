@@ -1,101 +1,109 @@
 from __future__ import annotations
 
-import time
 import threading
-from functools import lru_cache
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import rclpy
 from rclpy.node import Node
 
-# rclpy spin_once is not re-entrant; protect it across the process.
-_SPIN_LOCK = threading.Lock()
+from backend.core.ros_context import init_once
+
+_ADAPTER_LOCK = threading.Lock()
+_ADAPTER: "ROSAdapter | None" = None
 
 
-def _graph_warmup(node: Node, seconds: float = 0.8):
-    """Spin briefly so ROS graph discovery settles."""
-    end = time.time() + seconds
-    while rclpy.ok() and time.time() < end:
-        with _SPIN_LOCK:
-            rclpy.spin_once(node, timeout_sec=0.1)
+def _graph_warmup(node: Node):
+    # best-effort spin to refresh graph caches
+    try:
+        rclpy.spin_once(node, timeout_sec=0.05)
+    except Exception:
+        pass
 
 
 class ROSAdapter:
     """
-    Thin wrapper around rclpy Node graph/introspection APIs.
-    Must preserve the interface expected by backend.core.graph_model.
+    Stable, singleton ROS access layer.
+    IMPORTANT: keep method names compatible with the rest of the codebase.
     """
 
     def __init__(self):
-        # Safe to call multiple times; rclpy will ignore if already init'd in-process.
+        init_once()
+        self._node = Node("ros_supervisor_adapter")
+
+    # ---- Nodes ----
+    def get_nodes(self) -> List[str]:
+        """Return list of node names (no namespaces)."""
+        _graph_warmup(self._node)
+        return [n for (n, _ns) in self._node.get_node_names_and_namespaces()]
+
+    # ---- Topics ----
+    def get_topic_names_and_types(self) -> List[Tuple[str, List[str]]]:
+        _graph_warmup(self._node)
+        return [(name, list(types)) for (name, types) in self._node.get_topic_names_and_types()]
+
+    def get_topics(self) -> List[Dict[str, Any]]:
+        """
+        Compatibility helper used by graph_model.py.
+        Returns: [{"name": "/topic", "types": ["pkg/msg/Type", ...]}, ...]
+        """
+        out: List[Dict[str, Any]] = []
+        for name, types in self.get_topic_names_and_types():
+            out.append({"name": name, "types": types})
+        return out
+
+    def get_publishers_by_topic(self, topic_name: str) -> List[str]:
+        """Return publisher node names for a given topic."""
+        _graph_warmup(self._node)
+        pubs = self._node.get_publishers_info_by_topic(topic_name)
+        return sorted({p.node_name for p in pubs})
+
+    def get_subscribers_by_topic(self, topic_name: str) -> List[str]:
+        """Return subscriber node names for a given topic."""
+        _graph_warmup(self._node)
+        subs = self._node.get_subscriptions_info_by_topic(topic_name)
+        return sorted({s.node_name for s in subs})
+
+    # ---- Per-node pub/sub (used by node health, etc.) ----
+    def get_publishers(self, node_name: str) -> List[str]:
+        """Return topic names published by node_name."""
+        _graph_warmup(self._node)
+        out = []
+        for tname, _types in self._node.get_topic_names_and_types():
+            pubs = self._node.get_publishers_info_by_topic(tname)
+            for p in pubs:
+                if p.node_name == node_name:
+                    out.append(tname)
+        return sorted(set(out))
+
+    def get_subscribers(self, node_name: str) -> List[str]:
+        """Return topic names subscribed by node_name."""
+        _graph_warmup(self._node)
+        out = []
+        for tname, _types in self._node.get_topic_names_and_types():
+            subs = self._node.get_subscriptions_info_by_topic(tname)
+            for s in subs:
+                if s.node_name == node_name:
+                    out.append(tname)
+        return sorted(set(out))
+
+    # ---- TF (MVP stub) ----
+    def get_tf_tree(self) -> Dict[str, Any]:
+        """
+        MVP-safe stub so /snapshot never fails.
+        We'll wire real TF metrics later via /tf/report + /tf/validate.
+        """
+        return {"frames": [], "edges": [], "roots": [], "children_map": {}}
+
+    def destroy(self):
         try:
-            rclpy.init(args=None)
+            self._node.destroy_node()
         except Exception:
             pass
 
-        # Single node instance for the whole API process (handled by create_ros_adapter cache).
-        self._node = Node("ros_supervisor_adapter")
 
-    # ---- Graph basics ----
-    def get_nodes(self) -> List[str]:
-        _graph_warmup(self._node)
-        return list(self._node.get_node_names())
-
-    def get_topic_names_and_types(self) -> List[Dict[str, Any]]:
-        _graph_warmup(self._node)
-        out: List[Dict[str, Any]] = []
-        for name, types in self._node.get_topic_names_and_types():
-            out.append({"name": name, "types": list(types)})
-        return out
-
-    def get_publishers(self, topic_name: str) -> List[str]:
-        _graph_warmup(self._node)
-        infos = self._node.get_publishers_info_by_topic(topic_name)
-        return [i.node_name for i in infos]
-
-    def get_subscribers(self, topic_name: str) -> List[str]:
-        _graph_warmup(self._node)
-        infos = self._node.get_subscriptions_info_by_topic(topic_name)
-        return [i.node_name for i in infos]
-
-    def get_topics(self) -> List[Dict[str, Any]]:
-        _graph_warmup(self._node)
-        topics: List[Dict[str, Any]] = []
-        for name, types in self._node.get_topic_names_and_types():
-            pubs = self._node.get_publishers_info_by_topic(name)
-            subs = self._node.get_subscriptions_info_by_topic(name)
-            topics.append(
-                {
-                    "name": name,
-                    "types": list(types),
-                    "publishers": [p.node_name for p in pubs],
-                    "subscribers": [s.node_name for s in subs],
-                }
-            )
-        return topics
-
-    # ---- TF ----
-    def get_tf_tree(self) -> Dict[str, Any]:
-        from backend.core.tf_inspector import inspect_tf
-        from backend.core.tf_validator import validate_tf
-
-        report = inspect_tf(duration_sec=1.0)
-        result = validate_tf(report)
-        return {
-            "frames": report.get("frames", []),
-            "edges": report.get("edges", []),
-            "roots": report.get("roots", []),
-            "errors": result.get("errors", []),
-            "warnings": result.get("warnings", []),
-        }
-
-    # ---- Parameters ----
-    def get_node_parameters(self, node_name: str) -> Dict[str, Any]:
-        from backend.core.param_reader import read_all_parameters
-        return read_all_parameters(node_name)
-
-
-@lru_cache(maxsize=1)
 def create_ros_adapter() -> ROSAdapter:
-    # Cached singleton: prevents duplicate Node() creation + rosout publisher warnings.
-    return ROSAdapter()
+    global _ADAPTER
+    with _ADAPTER_LOCK:
+        if _ADAPTER is None:
+            _ADAPTER = ROSAdapter()
+        return _ADAPTER

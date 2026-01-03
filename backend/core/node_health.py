@@ -9,7 +9,14 @@ OBSERVER_NODES = {"ros_supervisor_adapter"}
 
 
 def build_node_health(snapshot: Dict[str, Any], adapter, rate_window_sec: float) -> Dict[str, Any]:
-    nodes: List[str] = snapshot.get("nodes", []) or []
+    # Normalize nodes into a list of node-name strings
+    nodes_raw = snapshot.get("nodes", []) or []
+    nodes: List[str] = [
+        x["name"] if isinstance(x, dict) else x
+        for x in nodes_raw
+        if x
+    ]
+
     topics: List[Dict[str, Any]] = snapshot.get("topics", []) or []
 
     out_nodes: List[Dict[str, Any]] = []
@@ -24,9 +31,18 @@ def build_node_health(snapshot: Dict[str, Any], adapter, rate_window_sec: float)
         if len(pubs) == 0:
             continue
         try:
-            topic_rates.append(measure_topic_rate(adapter, name, window_sec=rate_window_sec))
+            topic_rates.append(
+                measure_topic_rate(adapter, name, window_sec=rate_window_sec)
+            )
         except Exception as e:
-            topic_rates.append({"topic": name, "window_sec": rate_window_sec, "hz": None, "error": str(e)})
+            topic_rates.append(
+                {
+                    "topic": name,
+                    "window_sec": rate_window_sec,
+                    "hz": None,
+                    "error": str(e),
+                }
+            )
 
     rate_map = {tr["topic"]: tr for tr in topic_rates}
 
@@ -48,21 +64,25 @@ def build_node_health(snapshot: Dict[str, Any], adapter, rate_window_sec: float)
         meaningful_pubs = [x for x in pubs if x not in IGNORE_TOPICS]
         meaningful_subs = [x for x in subs if x not in IGNORE_TOPICS]
 
-        # Only warn if there is truly no meaningful pub/sub activity
         if not meaningful_pubs and not meaningful_subs:
             if n in OBSERVER_NODES:
-                warnings.append("INFO: observer node (no meaningful pub/sub expected).")
+                warnings.append(
+                    "INFO: observer node (no meaningful pub/sub expected)."
+                )
             else:
-                warnings.append("Node has no meaningful pub/sub activity (only rosout/parameter_events or nothing).")
+                warnings.append(
+                    "Node has no meaningful pub/sub activity (only rosout/parameter_events or nothing)."
+                )
 
-        # If node publishes a meaningful topic, ensure the topic is actually active
         for tname in meaningful_pubs:
             tr = rate_map.get(tname)
             if tr is None:
                 continue
             hz = tr.get("hz")
             if not is_rate_healthy(hz):
-                warnings.append(f"Publishes {tname} but rate is low/unknown (hz={hz}).")
+                warnings.append(
+                    f"Publishes {tname} but rate is low/unknown (hz={hz})."
+                )
 
         out_nodes.append(
             {
