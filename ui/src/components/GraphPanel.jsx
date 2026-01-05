@@ -18,6 +18,44 @@ function Card({ title, children }) {
   );
 }
 
+function TopicTile({ name, types }) {
+  return (
+    <div
+      style={{
+        background: "rgba(255,255,255,0.02)",
+        borderRadius: 10,
+        padding: 12,
+        boxShadow: "0 0 0 1px rgba(255,255,255,0.04)",
+        minWidth: 0,
+      }}
+    >
+      <div
+        title={name}
+        style={{
+          fontWeight: 750,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          marginBottom: 6,
+        }}
+      >
+        {name}
+      </div>
+      <div
+        title={(types && types.length) ? types.join(", ") : "—"}
+        style={{
+          opacity: 0.75,
+          fontSize: 13,
+          lineHeight: 1.25,
+          wordBreak: "break-word",
+        }}
+      >
+        {(types && types.length) ? types.join(", ") : "—"}
+      </div>
+    </div>
+  );
+}
+
 export default function GraphPanel() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
@@ -67,14 +105,16 @@ export default function GraphPanel() {
           {normalizedTopics.length === 0 ? (
             <div style={{ opacity: 0.7 }}>—</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 10,
+                alignItems: "start",
+              }}
+            >
               {normalizedTopics.map((t) => (
-                <div key={t.name}>
-                  <div style={{ fontWeight: 700 }}>{t.name}</div>
-                  <div style={{ opacity: 0.75, fontSize: 13 }}>
-                    {(t.types && t.types.length) ? t.types.join(", ") : "—"}
-                  </div>
-                </div>
+                <TopicTile key={t.name} name={t.name} types={t.types} />
               ))}
             </div>
           )}
