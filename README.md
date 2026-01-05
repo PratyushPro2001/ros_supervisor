@@ -89,36 +89,97 @@ ROS Supervisor is designed to **power** dashboards, CI checks, autonomy supervis
 ```
 backend/
 ├── core/
-│   ├── ros_adapter.py      # ROS graph + runtime access
-│   ├── graph_model.py      # System snapshot builder
-│   ├── qos_inspector.py    # QoS reporting & validation
-│   ├── tf_inspector.py     # TF tree analysis
-│   └── node_health.py      # Node health logic
+│   ├── ros_adapter.py
+│   ├── graph_model.py
+│   ├── qos_inspector.py
+│   ├── tf_inspector.py
+│   └── node_health.py
 │
 ├── api/
-│   ├── main.py             # FastAPI entrypoint
-│   ├── routes.py           # REST endpoints
-│   └── snapshot_daemon.py  # Continuous snapshot worker
+│   ├── main.py
+│   ├── routes.py
+│   └── snapshot_daemon.py
 │
-├── scripts/                # Standalone diagnostics scripts
-├── cli.py                  # Unified CLI wrapper
-└── README.md               # Project documentation
+├── scripts/
+├── cli.py
+└── README.md
 
 ui/
-└── README.md               # Frontend‑only documentation
+└── README.md
 ```
 
 ---
 
-## Quick Start (Backend)
+## Quick Start (Backend Only)
 
 ```bash
 cd ~/ros_supervisor
 source venv/bin/activate
 source /opt/ros/humble/setup.bash
 
-# Start backend with snapshot daemon
 uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+---
+
+## Quick Start (ROS 2 Launch — Recommended)
+
+This starts **everything at once** using a single ROS launch command:
+
+* Backend (FastAPI + snapshot daemon)
+* Web UI (Vite + React)
+* Browser auto‑opens to the dashboard
+
+### Prerequisites
+
+* Ubuntu 22.04
+* ROS 2 Humble
+* Python 3.10+
+* Node.js + npm
+* colcon
+
+### One‑Time Setup
+
+```bash
+git clone https://github.com/PratyushPro2001/ros_supervisor.git
+cd ros_supervisor
+
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+cd ui
+npm install
+cd ..
+```
+
+### Optional (Recommended): Configure Repo Path
+
+```bash
+mkdir -p ~/.config/ros_supervisor
+
+cat > ~/.config/ros_supervisor/paths.env <<'EOF'
+ROS_SUPERVISOR_REPO=/absolute/path/to/ros_supervisor
+EOF
+```
+
+If this file is missing, the launch system will automatically infer the repo location.
+
+### Build + Launch
+
+```bash
+cd ros_ws
+source /opt/ros/humble/setup.bash
+colcon build --merge-install
+source install/setup.bash
+
+ros2 launch ros_supervisor supervisor.launch.py
+```
+
+Dashboard:
+
+```
+http://127.0.0.1:5173
 ```
 
 ---
@@ -126,32 +187,14 @@ uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
 ## REST API (MVP)
 
 * `GET /snapshot`
-  Returns the latest cached system snapshot (recommended for dashboards)
-
 * `GET /health`
-  One‑shot health computation (serialized)
-
 * `GET /graph`
-  One‑shot ROS graph snapshot
 
 Example:
 
 ```bash
 curl http://127.0.0.1:8000/snapshot | python3 -m json.tool
 ```
-
----
-
-## Typical Debugging Workflow
-
-1. Observe live snapshot (`/snapshot`)
-2. Inspect ROS graph consistency
-3. Validate QoS compatibility
-4. Check topic publish rates
-5. Validate TF tree integrity
-6. Inspect parameters and node health
-
-This mirrors how **senior robotics engineers debug production ROS 2 systems**.
 
 ---
 
@@ -167,37 +210,14 @@ This mirrors how **senior robotics engineers debug production ROS 2 systems**.
 
 * Backend diagnostics: **Stable (MVP)**
 * Snapshot daemon: **Stable**
-* REST API: **Stable for dashboards**
-* Web UI: **Minimal MVP (real‑time, fast)**
-
----
-
-## Roadmap (Post‑MVP)
-
-* Persistent health monitoring with event history
-* Lifecycle node awareness
-* TF quality metrics (age, frequency, staleness)
-* Parameter risk analysis
-* Temporal diagnostics (event‑based warnings)
-* Offline rosbag analysis
-* Cross‑node contract / pipeline validation
-* Extensible diagnostics framework
-
----
-
-## One‑Line Pitch
-
-**ROS Supervisor is a stack‑agnostic observability layer for ROS 2 that detects structural, temporal, and configuration‑level failures before they become runtime bugs.**
+* REST API: **Stable**
+* Web UI: **Minimal MVP**
 
 ---
 
 ## Author
 
-**Pratyush**
-Robotics · ROS 2 · Systems Diagnostics
+**Pratyush**  
+M.S. Robotics, University of Delaware  
+Robotics · ROS 2 · Systems Diagnostics
 
----
-
-## License
-
-MIT (planned)
