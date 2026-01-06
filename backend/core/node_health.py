@@ -25,11 +25,18 @@ def build_node_health(snapshot: Dict[str, Any], adapter, rate_window_sec: float)
     # Measure rates only for meaningful topics that have at least one publisher
     for t in topics:
         name = t.get("name")
-        pubs = t.get("publishers") or []
         if not name or name in IGNORE_TOPICS:
             continue
+
+        # Use live ROS lookup for publishers (snapshot topic entries do not include publishers/subscribers)
+        try:
+            pubs = adapter.get_publishers_by_topic(name)
+        except Exception:
+            pubs = []
+
         if len(pubs) == 0:
             continue
+
         try:
             topic_rates.append(
                 measure_topic_rate(adapter, name, window_sec=rate_window_sec)
@@ -47,17 +54,15 @@ def build_node_health(snapshot: Dict[str, Any], adapter, rate_window_sec: float)
     rate_map = {tr["topic"]: tr for tr in topic_rates}
 
     for n in sorted(nodes):
-        pubs: List[str] = []
-        subs: List[str] = []
-
-        for t in topics:
-            tname = t.get("name")
-            if not tname:
-                continue
-            if n in (t.get("publishers") or []):
-                pubs.append(tname)
-            if n in (t.get("subscribers") or []):
-                subs.append(tname)
+        # Compute per-node pub/sub directly from ROS via adapter
+        try:
+            pubs: List[str] = adapter.get_publishers(n)
+        except Exception:
+            pubs = []
+        try:
+            subs: List[str] = adapter.get_subscribers(n)
+        except Exception:
+            subs = []
 
         warnings: List[str] = []
 

@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict
 
 from backend.core.ros_adapter import create_ros_adapter
-from backend.core.graph_model import build_system_snapshot
+from backend.core.graph_model import build_graph
 from backend.core.node_health import build_node_health
 
 
@@ -40,12 +40,13 @@ class SnapshotDaemon:
             return dict(self._latest)
 
     def _run(self):
-        adapter = create_ros_adapter()  # ONE adapter, reused forever
+        adapter = create_ros_adapter()  # singleton adapter
         while not self._stop.is_set():
             t0 = time.time()
             try:
-                graph = build_system_snapshot(adapter)
+                graph = build_graph(adapter, include_system_edges=False)
                 health = build_node_health(graph, adapter, rate_window_sec=3.0)
+
                 payload = {
                     "ts": time.time(),
                     "ok": True,
@@ -65,15 +66,13 @@ class SnapshotDaemon:
             with self._lock:
                 self._latest = payload
 
-            # once per cycle log (not per request)
             print(
                 "[snapshot-daemon] ok=%s ts=%s err=%s"
-                % (payload.get("ok"), payload.get("ts"), payload.get("error"))
+                % (payload["ok"], payload["ts"], payload["error"])
             )
 
             elapsed = time.time() - t0
-            sleep_for = max(0.05, self.period_sec - elapsed)
-            self._stop.wait(sleep_for)
+            self._stop.wait(max(0.05, self.period_sec - elapsed))
 
 
 daemon = SnapshotDaemon(period_sec=0.5)

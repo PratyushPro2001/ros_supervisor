@@ -14,7 +14,7 @@ export default function SummaryCards({ nodes }) {
         boxShadow: "0 0 0 1px rgba(255,255,255,0.03)",
       }}
     >
-      <div style={{ fontSize: 12, opacity: 0.7 }}>{label}</div>
+      <div style={{ fontSize: 14, opacity: 0.7 }}>{label}</div>
       <div style={{ fontSize: 28, fontWeight: 700, color }}>{value}</div>
     </div>
   );

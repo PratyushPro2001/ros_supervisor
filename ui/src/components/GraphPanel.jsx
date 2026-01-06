@@ -1,125 +1,210 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-const API_BASE = "http://127.0.0.1:8000";
-
-function Card({ title, children }) {
-  return (
-    <div
-      style={{
-        background: "#161a22",
-        borderRadius: 12,
-        padding: 16,
-        boxShadow: "0 0 0 1px rgba(255,255,255,0.03)",
-      }}
-    >
-      <div style={{ fontSize: 14, opacity: 0.8, marginBottom: 10 }}>{title}</div>
-      {children}
-    </div>
-  );
+function uniqSorted(arr) {
+  return Array.from(new Set(arr)).sort();
 }
 
-function TopicTile({ name, types }) {
-  return (
-    <div
-      style={{
-        background: "rgba(255,255,255,0.02)",
-        borderRadius: 10,
-        padding: 12,
-        boxShadow: "0 0 0 1px rgba(255,255,255,0.04)",
-        minWidth: 0,
-      }}
-    >
-      <div
-        title={name}
-        style={{
-          fontWeight: 750,
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          marginBottom: 6,
-        }}
-      >
-        {name}
-      </div>
-      <div
-        title={(types && types.length) ? types.join(", ") : "—"}
-        style={{
-          opacity: 0.75,
-          fontSize: 13,
-          lineHeight: 1.25,
-          wordBreak: "break-word",
-        }}
-      >
-        {(types && types.length) ? types.join(", ") : "—"}
-      </div>
-    </div>
-  );
-}
-
-export default function GraphPanel() {
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState(null);
+export default function GraphPanel({ graph }) {
+  const wrapRef = useRef(null);
+  const [wrapW, setWrapW] = useState(0);
 
   useEffect(() => {
-    fetch(`${API_BASE}/graph`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then(setData)
-      .catch((e) => setErr(String(e)));
+    if (!wrapRef.current) return;
+    const el = wrapRef.current;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) setWrapW(e.contentRect.width || 0);
+    });
+    ro.observe(el);
+    setWrapW(el.getBoundingClientRect().width || 0);
+
+    return () => ro.disconnect();
   }, []);
 
-  if (err) return <Card title="ROS Graph Snapshot"><pre>Error: {err}</pre></Card>;
-  if (!data) return <Card title="ROS Graph Snapshot"><pre>Loading…</pre></Card>;
+  const edges = graph?.edges || [];
 
-  const nodes = data.nodes ?? [];
-  const topics = data.topics ?? data.topic_names_and_types ?? [];
+  const { pubs, subs, topics } = useMemo(() => {
+    const pubs0 = [];
+    const subs0 = [];
+    const topics0 = [];
+    for (const e of edges) {
+      pubs0.push(e.from);
+      subs0.push(e.to);
+      topics0.push(e.topic);
+    }
+    return {
+      pubs: uniqSorted(pubs0),
+      subs: uniqSorted(subs0),
+      topics: uniqSorted(topics0),
+    };
+  }, [edges]);
 
-  // topics may be [{name, types}] already or raw tuples depending on backend evolution
-  const normalizedTopics = topics.map((t) => {
-    if (Array.isArray(t) && t.length >= 2) return { name: t[0], types: t[1] };
-    return { name: t.name, types: t.types ?? [] };
-  });
+  if (!graph) return <div style={{ opacity: 0.8 }}>Loading graph…</div>;
+  if (!edges.length) {
+    return <div style={{ opacity: 0.8 }}>No edges yet (start some nodes).</div>;
+  }
+
+  // --- Base layout (unscaled, in "SVG units")
+  const pad = 24;
+  const colGap = 110;
+  const rowGap = 18;
+
+  const nodeW = 240;
+  const nodeH = 44;
+
+  const topicW = 320;
+  const topicH = 40;
+
+  const leftX = pad;
+  const midX = leftX + nodeW + colGap;
+  const rightX = midX + topicW + colGap;
+
+  const rows = Math.max(pubs.length, topics.length, subs.length);
+  const layoutH = pad * 2 + rows * nodeH + (rows - 1) * rowGap;
+  const layoutW = rightX + nodeW + pad;
+
+  // Scale-to-fit (no scrolling)
+  const availableW = Math.max(0, (wrapW || 0) - 2); // small safety
+  const scale = availableW > 0 ? Math.min(1, availableW / layoutW) : 1;
+  const svgHpx = Math.max(180, Math.ceil(layoutH * scale));
+
+  const yForRow = (i) => pad + i * (nodeH + rowGap);
+
+  const rect = (x, y, w, h, fill, stroke) => (
+    <rect
+      x={x}
+      y={y}
+      width={w}
+      height={h}
+      rx={12}
+      ry={12}
+      fill={fill}
+      stroke={stroke}
+      strokeWidth={1.2}
+    />
+  );
+
+  const label = (x, y, text, size = 14) => (
+    <text
+      x={x}
+      y={y}
+      fill="#ffffff"
+      fontSize={size}
+      fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+    >
+      {text}
+    </text>
+  );
+
+  const arrow = (x1, y1, x2, y2) => (
+    <path
+      d={`M ${x1} ${y1} C ${x1 + 60} ${y1}, ${x2 - 60} ${y2}, ${x2} ${y2}`}
+      fill="none"
+      stroke="rgba(255,255,255,0.45)"
+      strokeWidth={2}
+      markerEnd="url(#arrow)"
+    />
+  );
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-      <Card title={`Nodes (${nodes.length})`}>
-        <div style={{ maxHeight: 320, overflow: "auto" }}>
-          {nodes.length === 0 ? (
-            <div style={{ opacity: 0.7 }}>—</div>
-          ) : (
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {nodes.map((n) => (
-                <li key={n} style={{ marginBottom: 6 }}>
-                  {n}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </Card>
+    <div ref={wrapRef} style={{ width: "100%" }}>
+      <svg
+        width="100%"
+        height={svgHpx}
+        viewBox={`0 0 ${layoutW} ${layoutH}`}
+        preserveAspectRatio="xMidYMid meet"
+        style={{
+          display: "block",
+          borderRadius: 12,
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(255,255,255,0.10)",
+        }}
+      >
+        <defs>
+          <marker
+            id="arrow"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.7)" />
+          </marker>
+        </defs>
 
-      <Card title={`Topics (${normalizedTopics.length})`}>
-        <div style={{ maxHeight: 320, overflow: "auto" }}>
-          {normalizedTopics.length === 0 ? (
-            <div style={{ opacity: 0.7 }}>—</div>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: 10,
-                alignItems: "start",
-              }}
-            >
-              {normalizedTopics.map((t) => (
-                <TopicTile key={t.name} name={t.name} types={t.types} />
-              ))}
-            </div>
-          )}
-        </div>
-      </Card>
+        {/* We scale the whole drawing group */}
+        <g transform={`scale(${scale})`}>
+          {/* columns labels (optional) */}
+          {label(leftX, pad - 6, "Nodes (publishers)", 12)}
+          {label(midX, pad - 6, "Topics", 12)}
+          {label(rightX, pad - 6, "Nodes (subscribers)", 12)}
+
+          {/* left nodes */}
+          {pubs.map((name, i) => {
+            const y = yForRow(i);
+            return (
+              <g key={`p-${name}`}>
+                {rect(leftX, y, nodeW, nodeH, "rgba(74,163,255,0.28)", "rgba(74,163,255,0.55)")}
+                {label(leftX + 14, y + 28, name, 14)}
+              </g>
+            );
+          })}
+
+          {/* topics */}
+          {topics.map((t, i) => {
+            const y = yForRow(i);
+            return (
+              <g key={`t-${t}`}>
+                {rect(midX, y + 2, topicW, topicH, "rgba(255,255,255,0.18)", "rgba(255,255,255,0.35)")}
+                {label(midX + 14, y + 28, t, 14)}
+              </g>
+            );
+          })}
+
+          {/* right nodes */}
+          {subs.map((name, i) => {
+            const y = yForRow(i);
+            return (
+              <g key={`s-${name}`}>
+                {rect(rightX, y, nodeW, nodeH, "rgba(251,191,36,0.22)", "rgba(251,191,36,0.45)")}
+                {label(rightX + 14, y + 28, name, 14)}
+              </g>
+            );
+          })}
+
+          {/* arrows: pub -> topic */}
+          {edges.map((e, idx) => {
+            const pIdx = pubs.indexOf(e.from);
+            const tIdx = topics.indexOf(e.topic);
+            if (pIdx < 0 || tIdx < 0) return null;
+
+            const y1 = yForRow(pIdx) + nodeH / 2;
+            const y2 = yForRow(tIdx) + nodeH / 2;
+
+            const x1 = leftX + nodeW;
+            const x2 = midX;
+
+            return <g key={`pt-${idx}`}>{arrow(x1, y1, x2, y2)}</g>;
+          })}
+
+          {/* arrows: topic -> sub */}
+          {edges.map((e, idx) => {
+            const tIdx = topics.indexOf(e.topic);
+            const sIdx = subs.indexOf(e.to);
+            if (tIdx < 0 || sIdx < 0) return null;
+
+            const y1 = yForRow(tIdx) + nodeH / 2;
+            const y2 = yForRow(sIdx) + nodeH / 2;
+
+            const x1 = midX + topicW;
+            const x2 = rightX;
+
+            return <g key={`ts-${idx}`}>{arrow(x1, y1, x2, y2)}</g>;
+          })}
+        </g>
+      </svg>
     </div>
   );
 }
