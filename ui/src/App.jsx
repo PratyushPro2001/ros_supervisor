@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import Layout from "./components/Layout";
 import GraphPanel from "./components/GraphPanel";
 
+// Backend address. Default unchanged; override with VITE_API_URL (e.g. when the API runs in Docker on :8100).
+const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
 function Card({ title, children }) {
   return (
     <div
@@ -28,7 +31,7 @@ export default function App() {
   useEffect(() => {
     const load = async () => {
       try {
-        const r = await fetch("http://127.0.0.1:8000/snapshot");
+        const r = await fetch(`${API_BASE}/snapshot`);
         const j = await r.json();
         setSnap(j);
         setErr(null);
